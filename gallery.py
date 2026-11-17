@@ -59,39 +59,93 @@ def clean(s) -> str:
     if not s:
         return ""
     s = html.unescape(str(s)).replace("\x00", "").strip()
-    return "" if s.lower() in ("charset=ascii", "default", "ascii") else s
+    return "" if s.lower() in ("charset=ascii", "default", "ascii", "user comments") else s
 
 
-def describe(path: Path, im: Image.Image) -> tuple[str, str]:
-    """Return (description, date) for an image."""
+def embedded_description(im: Image.Image) -> str:
+    """Description stored inside the picture file (XMP / EXIF)."""
     exif = im.getexif()
     sub = exif.get_ifd(0x8769)
-    date = str(sub.get(36867) or exif.get(306) or "")[:10].replace(":", "-")
-
     xmp = im.info.get("xmp") or b""
     if isinstance(xmp, bytes):
         xmp = xmp.decode("utf-8", "replace")
     m = XMP_DESC_ATTR.search(xmp) or XMP_DESC_ELEM.search(xmp)
     if m and clean(m.group(1)):
-        return clean(m.group(1)), date
-
+        return clean(m.group(1))
     d = clean(fix_mojibake(str(exif.get(270, ""))))
     if d:
-        return d, date
+        return d
     if 37510 in sub:
-        d = clean(decode_user_comment(sub[37510]))
-        if d:
-            return d, date
+        return clean(decode_user_comment(sub[37510]))
+    return ""
 
+
+def sidecar(path: Path) -> dict:
+    """caption / note / place from digiKam's .comments/<file>.xml."""
     side = path.parent / ".comments" / (path.name + ".xml")
-    if side.exists():
-        try:
-            d = clean(ET.parse(side).findtext("caption"))
-            if d:
-                return d, date
-        except ET.ParseError:
-            pass
-    return "", date
+    if not side.exists():
+        return {}
+    try:
+        root = ET.parse(side).getroot()
+    except ET.ParseError:
+        return {}
+    return {k: clean(root.findtext(k)) for k in ("caption", "note", "place")}
+
+
+XMP_DATE = re.compile(r'(?:exif:DateTimeOriginal|photoshop:DateCreated)'
+                      r'(?:="|>)\s*(\d{4}[-:]\d\d[-:]\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?)?)')
+_FI = str.maketrans({"å": "z\u0001", "ä": "z\u0002", "ö": "z\u0003", "æ": "z\u0002", "ø": "z\u0003",
+                     "ü": "y", "é": "e", "è": "e", "á": "a", "à": "a"})
+
+
+def natkey(name: str):
+    """Natural, case-insensitive sort key with Finnish letter order:
+    'kuva2' < 'kuva10', and å ä ö after z."""
+    s = name.lower().translate(_FI)
+    return [(0, int(t), "") if t.isdigit() else (1, 0, t) for t in re.split(r"(\d+)", s) if t]
+
+
+def taken_date(sub, im: Image.Image) -> str:
+    """Time the picture was taken (exposed) as 'YYYY-MM-DD HH:MM:SS[.ff]',
+    possibly only 'YYYY-MM-DD'; '' if unknown. File-change and
+    create/digitized dates are deliberately not used: for scanned film they
+    are the scanning or editing time, not the time of exposure."""
+    v = str(sub.get(36867) or "").strip().replace("\x00", "")  # DateTimeOriginal
+    if re.match(r"\d{4}[:-]\d\d[:-]\d\d", v) and not v.startswith("0000"):
+        d = v[:10].replace(":", "-") + v[10:19]
+        sub_s = str(sub.get(37521) or "").strip().replace("\x00", "")  # SubSecTimeOriginal
+        if len(d) == 19 and sub_s.isdigit():
+            d += "." + sub_s
+        return d
+    xmp = im.info.get("xmp") or b""
+    if isinstance(xmp, bytes):
+        xmp = xmp.decode("utf-8", "replace")
+    m = XMP_DATE.search(xmp)
+    if not m:
+        return ""
+    v = m.group(1)
+    return v[:10].replace(":", "-") + v[10:].replace("T", " ")
+
+
+def describe(path: Path, im: Image.Image) -> tuple[str, str]:
+    """Return (description, date). The description may have several lines:
+    .comments caption, embedded description, .comments note, .comments place —
+    duplicates left out."""
+    exif = im.getexif()
+    sub = exif.get_ifd(0x8769)
+    date = taken_date(sub, im)
+
+    sc = sidecar(path)
+    lines, seen = [], set()
+    for text, prefix in ((sc.get("caption"), ""), (embedded_description(im), ""),
+                         (sc.get("note"), ""), (sc.get("place"), "📍 ")):
+        key = " ".join((text or "").lower().split())
+        if key and key not in seen:
+            seen.add(key)
+            lines.append((key, prefix + text))
+    # leave out a line whose text is contained in a longer one
+    keep = [t for k, t in lines if not any(k != k2 and k in k2 for k2, _ in lines)]
+    return "\n".join(keep), date
 
 
 def process(path: Path) -> dict:
@@ -110,7 +164,8 @@ def process(path: Path) -> dict:
         "thumb": os.path.relpath(thumb, OUT),
         "full": path.as_uri(),
         "desc": desc,
-        "date": date,
+        "date": date[:10],
+        "taken": date,
     }
 
 
@@ -133,14 +188,14 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;
   display:flex;flex-direction:column;text-decoration:none;color:inherit}
 .card img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#0001;display:block}
-.card .cap{padding:8px 10px 10px}
+.card .cap{padding:8px 10px 10px;white-space:pre-line}
 .card .d{font-size:15px}
 .card .m{font-size:12px;color:var(--muted);margin-top:3px}
 .card .d:empty{display:none}
 #lb{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;z-index:10}
 #lb.on{display:flex}
 #lb img{flex:1;min-height:0;object-fit:contain;width:100%;padding:16px 60px 0}
-#lb .cap{color:#eee;text-align:center;padding:14px 20px 20px;font-size:18px}
+#lb .cap{color:#eee;text-align:center;padding:14px 20px 20px;font-size:18px;white-space:pre-line}
 #lb .cap small{display:block;color:#aaa;font-size:13px;margin-top:4px}
 #lb button{position:absolute;top:50%;transform:translateY(-50%);background:none;border:0;color:#fff;font-size:44px;cursor:pointer;padding:10px}
 #lb .prev{left:4px}#lb .next{right:4px}
@@ -162,11 +217,11 @@ function render(){
   shown=DATA.filter(p=>(!q||(p.desc+' '+p.name+' '+(p.folder||'')).toLowerCase().includes(q))&&(!only||p.desc));
   grid.innerHTML=shown.map((p,i)=>MODE==='index'
     ? `<a class="card" href="${esc(p.href)}"><img loading="lazy" src="${esc(p.thumb)}" alt=""><div class="cap"><div class="d">${esc(p.folder)}</div><div class="m">${p.count} kuvaa · ${p.described} kuvatekstiä</div></div></a>`
-    : `<div class="card" data-i="${i}"><img loading="lazy" src="${esc(p.thumb)}" alt="${esc(p.desc)}"><div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${esc(p.date)} · ${esc(p.name)}</div></div></div>`).join('');
+    : `<div class="card" data-i="${i}"><img loading="lazy" src="${esc(p.thumb)}" alt="${esc(p.desc)}"><div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${[p.date,p.name].filter(Boolean).map(esc).join(' · ')}</div></div></div>`).join('');
 }
 function show(i){cur=(i+shown.length)%shown.length;const p=shown[cur];
   lb.querySelector('img').src=p.full;
-  lb.querySelector('.cap').innerHTML=esc(p.desc||'')+`<small>${esc(p.date)} · ${esc(p.name)}</small>`;
+  lb.querySelector('.cap').innerHTML=esc(p.desc||'')+`<small>${[p.date,p.name].filter(Boolean).map(esc).join(' · ')}</small>`;
   lb.classList.add('on');}
 grid.addEventListener('click',e=>{const c=e.target.closest('.card[data-i]');if(c)show(+c.dataset.i)});
 lb.querySelector('.prev').onclick=()=>show(cur-1);
@@ -202,8 +257,8 @@ def main():
 
     search = '<input id="q" type="search" placeholder="Hae kuvatekstistä…">'
     index = []
-    for folder, items in sorted(folders.items()):
-        items.sort(key=lambda r: (r["date"], r["name"]))
+    for folder, items in sorted(folders.items(), key=lambda kv: natkey(kv[0])):
+        items.sort(key=lambda r: (not r["taken"], r["taken"], natkey(r["name"])))  # undated last
         fname = "album-" + re.sub(r"[^\w.-]+", "_", folder) + ".html"
         controls = (search + '<label><input id="only" type="checkbox"> vain kuvatekstilliset</label>'
                     '<a href="index.html">← Kaikki albumit</a>')
