@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>1988b</title>
+<style>
+:root{--bg:#f6f4f0;--fg:#1d1b18;--muted:#6b665e;--card:#fff;--line:#e2ddd4;--accent:#8a5a2b}
+@media (prefers-color-scheme:dark){:root{--bg:#161513;--fg:#ece8e1;--muted:#9a948a;--card:#211f1c;--line:#34312c;--accent:#d9a066}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:12px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+header h1{font-size:20px;margin:0 auto 0 0}
+header a{color:var(--accent);text-decoration:none}
+header input{padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);min-width:200px}
+header label{color:var(--muted);font-size:14px}
+main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;
+  display:flex;flex-direction:column;text-decoration:none;color:inherit}
+.card img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#0001;display:block}
+.card .cap{padding:8px 10px 10px}
+.card .d{font-size:15px}
+.card .m{font-size:12px;color:var(--muted);margin-top:3px}
+.card .d:empty{display:none}
+#lb{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;z-index:10}
+#lb.on{display:flex}
+#lb img{flex:1;min-height:0;object-fit:contain;width:100%;padding:16px 60px 0}
+#lb .cap{color:#eee;text-align:center;padding:14px 20px 20px;font-size:18px}
+#lb .cap small{display:block;color:#aaa;font-size:13px;margin-top:4px}
+#lb button{position:absolute;top:50%;transform:translateY(-50%);background:none;border:0;color:#fff;font-size:44px;cursor:pointer;padding:10px}
+#lb .prev{left:4px}#lb .next{right:4px}
+#lb .close{top:28px;right:8px;font-size:32px}
+</style></head><body>
+<header><h1>1988b</h1><input id="q" type="search" placeholder="Hae kuvatekstistä…"><label><input id="only" type="checkbox"> vain kuvatekstilliset</label><a href="index.html">← Kaikki albumit</a></header>
+<main id="grid"></main>
+<div id="lb"><img alt=""><div class="cap"></div>
+<button class="prev" aria-label="Edellinen">‹</button><button class="next" aria-label="Seuraava">›</button>
+<button class="close" aria-label="Sulje">✕</button></div>
+<script>
+const DATA=[{"name": "1988b-01.jpg", "thumb": "thumbs/1988b/1988b-01.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-01.jpg", "desc": "Anni, Pirjo, Ilkka", "date": "1988-01-07"}, {"name": "1988b-02.jpg", "thumb": "thumbs/1988b/1988b-02.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-02.jpg", "desc": "Kimmo ja Ilkka", "date": "1988-02-01"}, {"name": "1988b-03.jpg", "thumb": "thumbs/1988b/1988b-03.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-03.jpg", "desc": "Iida", "date": "1988-02-01"}, {"name": "1988b-04.jpg", "thumb": "thumbs/1988b/1988b-04.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-04.jpg", "desc": "Kerttu", "date": "1988-02-01"}, {"name": "1988b-05.jpg", "thumb": "thumbs/1988b/1988b-05.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-05.jpg", "desc": "Iida", "date": "1988-02-01"}, {"name": "1988b-06.jpg", "thumb": "thumbs/1988b/1988b-06.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-06.jpg", "desc": "Kerttu ja Ilkka", "date": "1988-02-01"}, {"name": "1988b-07.jpg", "thumb": "thumbs/1988b/1988b-07.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-07.jpg", "desc": "Iida ja Anni", "date": "1988-02-01"}, {"name": "1988b-08.jpg", "thumb": "thumbs/1988b/1988b-08.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-08.jpg", "desc": "Kerttu", "date": "1988-02-01"}, {"name": "1988b-09.jpg", "thumb": "thumbs/1988b/1988b-09.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-09.jpg", "desc": "Iida", "date": "1988-02-01"}, {"name": "1988b-10.jpg", "thumb": "thumbs/1988b/1988b-10.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-10.jpg", "desc": "Ilkka, Kimmo, Kerttu", "date": "1988-02-01"}, {"name": "1988b-11.jpg", "thumb": "thumbs/1988b/1988b-11.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-11.jpg", "desc": "Iida, Pirjo", "date": "1988-02-01"}, {"name": "1988b-12.jpg", "thumb": "thumbs/1988b/1988b-12.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-12.jpg", "desc": "Ilkka ja Kerttu sovittelevat laskettelumonoja", "date": "1988-02-01"}, {"name": "1988b-13.jpg", "thumb": "thumbs/1988b/1988b-13.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-13.jpg", "desc": "Iida ja Kerttu tauolla Vihdin hiihtokeskuksessa", "date": "1988-02-01"}, {"name": "1988b-14.jpg", "thumb": "thumbs/1988b/1988b-14.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-14.jpg", "desc": "Anni ja Ilkka laskettelusuksilla Vihdissä", "date": "1988-02-01"}, {"name": "1988b-15.jpg", "thumb": "thumbs/1988b/1988b-15.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-15.jpg", "desc": "Kerttu", "date": "1988-02-01"}, {"name": "1988b-16.jpg", "thumb": "thumbs/1988b/1988b-16.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-16.jpg", "desc": "Pirjo, Eeva, Sirkku ja Jouko Mariankadulla", "date": "1988-02-10"}, {"name": "1988b-17.jpg", "thumb": "thumbs/1988b/1988b-17.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-17.jpg", "desc": "Timo ja Ilkka Mariankadulla", "date": "1988-02-10"}, {"name": "1988b-18.jpg", "thumb": "thumbs/1988b/1988b-18.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-18.jpg", "desc": "Ilkka", "date": "1988-02-10"}, {"name": "1988b-19.jpg", "thumb": "thumbs/1988b/1988b-19.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-19.jpg", "desc": "Peltolan Paula ja Iida", "date": "1988-02-10"}, {"name": "1988b-20.jpg", "thumb": "thumbs/1988b/1988b-20.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-20.jpg", "desc": "Iida ja Paula", "date": "1988-02-10"}, {"name": "1988b-21.jpg", "thumb": "thumbs/1988b/1988b-21.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-21.jpg", "desc": "Iida", "date": "1988-02-10"}, {"name": "1988b-22.jpg", "thumb": "thumbs/1988b/1988b-22.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-22.jpg", "desc": "Peltolan Paula", "date": "1988-02-10"}, {"name": "1988b-23.jpg", "thumb": "thumbs/1988b/1988b-23.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-23.jpg", "desc": "Ilkka", "date": "1988-02-10"}, {"name": "1988b-24.jpg", "thumb": "thumbs/1988b/1988b-24.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-24.jpg", "desc": "Kerttu", "date": "1988-02-10"}, {"name": "1988b-26.jpg", "thumb": "thumbs/1988b/1988b-26.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-26.jpg", "desc": "Ilkka", "date": "1988-02-10"}, {"name": "1988b-27.jpg", "thumb": "thumbs/1988b/1988b-27.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-27.jpg", "desc": "Kerttu ja Ilkka", "date": "1988-02-10"}, {"name": "1988b-28.jpg", "thumb": "thumbs/1988b/1988b-28.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-28.jpg", "desc": "Ilkka", "date": "1988-02-10"}, {"name": "1988b-29.jpg", "thumb": "thumbs/1988b/1988b-29.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-29.jpg", "desc": "Ilkka ja Kerttu", "date": "1988-02-10"}, {"name": "1988b-30.jpg", "thumb": "thumbs/1988b/1988b-30.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-30.jpg", "desc": "Iida", "date": "1988-02-10"}, {"name": "1988b-31.jpg", "thumb": "thumbs/1988b/1988b-31.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-31.jpg", "desc": "Iida", "date": "1988-02-10"}, {"name": "1988b-32.jpg", "thumb": "thumbs/1988b/1988b-32.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-32.jpg", "desc": "Iida", "date": "1988-02-10"}, {"name": "1988b-33.jpg", "thumb": "thumbs/1988b/1988b-33.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-33.jpg", "desc": "Kerttu", "date": "1988-02-10"}, {"name": "1988b-34.jpg", "thumb": "thumbs/1988b/1988b-34.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-34.jpg", "desc": "Ilkka", "date": "1988-02-10"}, {"name": "1988b-35.jpg", "thumb": "thumbs/1988b/1988b-35.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-35.jpg", "desc": "Pirjo", "date": "1988-02-10"}, {"name": "1988b-36.jpg", "thumb": "thumbs/1988b/1988b-36.jpg", "full": "file:///home/koskenni/Pictures/export/1988b/1988b-36.jpg", "desc": "Kimmo ja Anni", "date": "1988-02-10"}], MODE="album";
+const grid=document.getElementById('grid'), lb=document.getElementById('lb');
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let shown=[], cur=0;
+function render(){
+  const q=(document.getElementById('q')?.value||'').toLowerCase();
+  const only=document.getElementById('only')?.checked;
+  shown=DATA.filter(p=>(!q||(p.desc+' '+p.name+' '+(p.folder||'')).toLowerCase().includes(q))&&(!only||p.desc));
+  grid.innerHTML=shown.map((p,i)=>MODE==='index'
+    ? `<a class="card" href="${esc(p.href)}"><img loading="lazy" src="${esc(p.thumb)}" alt=""><div class="cap"><div class="d">${esc(p.folder)}</div><div class="m">${p.count} kuvaa · ${p.described} kuvatekstiä</div></div></a>`
+    : `<div class="card" data-i="${i}"><img loading="lazy" src="${esc(p.thumb)}" alt="${esc(p.desc)}"><div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${esc(p.date)} · ${esc(p.name)}</div></div></div>`).join('');
+}
+function show(i){cur=(i+shown.length)%shown.length;const p=shown[cur];
+  lb.querySelector('img').src=p.full;
+  lb.querySelector('.cap').innerHTML=esc(p.desc||'')+`<small>${esc(p.date)} · ${esc(p.name)}</small>`;
+  lb.classList.add('on');}
+grid.addEventListener('click',e=>{const c=e.target.closest('.card[data-i]');if(c)show(+c.dataset.i)});
+lb.querySelector('.prev').onclick=()=>show(cur-1);
+lb.querySelector('.next').onclick=()=>show(cur+1);
+lb.querySelector('.close').onclick=()=>lb.classList.remove('on');
+document.addEventListener('keydown',e=>{if(!lb.classList.contains('on'))return;
+  if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);else if(e.key==='Escape')lb.classList.remove('on');});
+document.querySelectorAll('header input').forEach(el=>el.addEventListener('input',render));
+render();
+</script></body></html>

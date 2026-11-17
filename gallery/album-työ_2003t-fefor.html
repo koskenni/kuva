@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>työ/2003t-fefor</title>
+<style>
+:root{--bg:#f6f4f0;--fg:#1d1b18;--muted:#6b665e;--card:#fff;--line:#e2ddd4;--accent:#8a5a2b}
+@media (prefers-color-scheme:dark){:root{--bg:#161513;--fg:#ece8e1;--muted:#9a948a;--card:#211f1c;--line:#34312c;--accent:#d9a066}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:12px 20px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+header h1{font-size:20px;margin:0 auto 0 0}
+header a{color:var(--accent);text-decoration:none}
+header input{padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);min-width:200px}
+header label{color:var(--muted);font-size:14px}
+main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;
+  display:flex;flex-direction:column;text-decoration:none;color:inherit}
+.card img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#0001;display:block}
+.card .cap{padding:8px 10px 10px}
+.card .d{font-size:15px}
+.card .m{font-size:12px;color:var(--muted);margin-top:3px}
+.card .d:empty{display:none}
+#lb{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;z-index:10}
+#lb.on{display:flex}
+#lb img{flex:1;min-height:0;object-fit:contain;width:100%;padding:16px 60px 0}
+#lb .cap{color:#eee;text-align:center;padding:14px 20px 20px;font-size:18px}
+#lb .cap small{display:block;color:#aaa;font-size:13px;margin-top:4px}
+#lb button{position:absolute;top:50%;transform:translateY(-50%);background:none;border:0;color:#fff;font-size:44px;cursor:pointer;padding:10px}
+#lb .prev{left:4px}#lb .next{right:4px}
+#lb .close{top:28px;right:8px;font-size:32px}
+</style></head><body>
+<header><h1>työ/2003t-fefor</h1><input id="q" type="search" placeholder="Hae kuvatekstistä…"><label><input id="only" type="checkbox"> vain kuvatekstilliset</label><a href="index.html">← Kaikki albumit</a></header>
+<main id="grid"></main>
+<div id="lb"><img alt=""><div class="cap"></div>
+<button class="prev" aria-label="Edellinen">‹</button><button class="next" aria-label="Seuraava">›</button>
+<button class="close" aria-label="Sulje">✕</button></div>
+<script>
+const DATA=[{"name": "20030917--panorama.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917--panorama.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917--panorama.jpg", "desc": "Panorama - Fefor", "date": "2003-09-17"}, {"name": "20030917-0010.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0010.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0010.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0011.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0011.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0011.jpg", "desc": "Eckhard Bick", "date": "2003-09-17"}, {"name": "20030917-0013.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0013.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0013.jpg", "desc": "..., Eva Ejerhed, Janne Bondi Johannessen", "date": "2003-09-17"}, {"name": "20030917-0014.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0014.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0014.jpg", "desc": "Joakim Nivre, Torbjørn Nygård", "date": "2003-09-17"}, {"name": "20030917-0019.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0019.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0019.jpg", "desc": "Eva Ejerhed", "date": "2003-09-17"}, {"name": "20030917-0020.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0020.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0020.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0024.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0024.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0024.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0025.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0025.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0025.jpg", "desc": "Joakim Nivre, Torbjørn Nygård", "date": "2003-09-17"}, {"name": "20030917-0026.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0026.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0026.jpg", "desc": "Koenraad de Smedt", "date": "2003-09-17"}, {"name": "20030917-0027.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0027.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0027.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0028.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0028.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0028.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0031.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0031.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0031.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0040.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0040.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0040.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0041.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0041.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0041.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0043.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0043.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0043.jpg", "desc": "Koenraad de Smedt", "date": "2003-09-17"}, {"name": "20030917-0044.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0044.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0044.jpg", "desc": "Joakim, Torbjørn", "date": "2003-09-17"}, {"name": "20030917-0046.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0046.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0046.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0047.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0047.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0047.jpg", "desc": "Janne", "date": "2003-09-17"}, {"name": "20030917-0048.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0048.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0048.jpg", "desc": "Eckhard, ...", "date": "2003-09-17"}, {"name": "20030917-0050.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0050.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0050.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0053.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0053.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0053.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0055.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0055.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0055.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0056.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0056.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0056.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0059.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0059.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0059.jpg", "desc": "", "date": "2003-09-17"}, {"name": "20030917-0060.jpg", "thumb": "thumbs/työ/2003t-fefor/20030917-0060.jpg", "full": "file:///home/koskenni/Pictures/export/ty%C3%B6/2003t-fefor/20030917-0060.jpg", "desc": "", "date": "2003-09-17"}], MODE="album";
+const grid=document.getElementById('grid'), lb=document.getElementById('lb');
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let shown=[], cur=0;
+function render(){
+  const q=(document.getElementById('q')?.value||'').toLowerCase();
+  const only=document.getElementById('only')?.checked;
+  shown=DATA.filter(p=>(!q||(p.desc+' '+p.name+' '+(p.folder||'')).toLowerCase().includes(q))&&(!only||p.desc));
+  grid.innerHTML=shown.map((p,i)=>MODE==='index'
+    ? `<a class="card" href="${esc(p.href)}"><img loading="lazy" src="${esc(p.thumb)}" alt=""><div class="cap"><div class="d">${esc(p.folder)}</div><div class="m">${p.count} kuvaa · ${p.described} kuvatekstiä</div></div></a>`
+    : `<div class="card" data-i="${i}"><img loading="lazy" src="${esc(p.thumb)}" alt="${esc(p.desc)}"><div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${esc(p.date)} · ${esc(p.name)}</div></div></div>`).join('');
+}
+function show(i){cur=(i+shown.length)%shown.length;const p=shown[cur];
+  lb.querySelector('img').src=p.full;
+  lb.querySelector('.cap').innerHTML=esc(p.desc||'')+`<small>${esc(p.date)} · ${esc(p.name)}</small>`;
+  lb.classList.add('on');}
+grid.addEventListener('click',e=>{const c=e.target.closest('.card[data-i]');if(c)show(+c.dataset.i)});
+lb.querySelector('.prev').onclick=()=>show(cur-1);
+lb.querySelector('.next').onclick=()=>show(cur+1);
+lb.querySelector('.close').onclick=()=>lb.classList.remove('on');
+document.addEventListener('keydown',e=>{if(!lb.classList.contains('on'))return;
+  if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);else if(e.key==='Escape')lb.classList.remove('on');});
+document.querySelectorAll('header input').forEach(el=>el.addEventListener('input',render));
+render();
+</script></body></html>
