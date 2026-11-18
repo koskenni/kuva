@@ -66,9 +66,7 @@ def embedded_description(im: Image.Image) -> str:
     """Description stored inside the picture file (XMP / EXIF)."""
     exif = im.getexif()
     sub = exif.get_ifd(0x8769)
-    xmp = im.info.get("xmp") or b""
-    if isinstance(xmp, bytes):
-        xmp = xmp.decode("utf-8", "replace")
+    xmp = _xmp(im)
     m = XMP_DESC_ATTR.search(xmp) or XMP_DESC_ELEM.search(xmp)
     if m and clean(m.group(1)):
         return clean(m.group(1))
@@ -105,6 +103,16 @@ def natkey(name: str):
     return [(0, int(t), "") if t.isdigit() else (1, 0, t) for t in re.split(r"(\d+)", s) if t]
 
 
+def _xmp(im: Image.Image) -> str:
+    """The picture's XMP packet as text (JPEG, PNG or TIFF), '' if none."""
+    x = im.info.get("xmp") or im.info.get("XML:com.adobe.xmp") or b""
+    if not x and hasattr(im, "tag_v2"):
+        x = im.tag_v2.get(700) or b""
+    if isinstance(x, (tuple, list)):
+        x = bytes(x)
+    return x.decode("utf-8", "replace") if isinstance(x, bytes) else str(x)
+
+
 def taken_date(sub, im: Image.Image) -> str:
     """Time the picture was taken (exposed) as 'YYYY-MM-DD HH:MM:SS[.ff]',
     possibly only 'YYYY-MM-DD'; '' if unknown. File-change and
@@ -117,9 +125,7 @@ def taken_date(sub, im: Image.Image) -> str:
         if len(d) == 19 and sub_s.isdigit():
             d += "." + sub_s
         return d
-    xmp = im.info.get("xmp") or b""
-    if isinstance(xmp, bytes):
-        xmp = xmp.decode("utf-8", "replace")
+    xmp = _xmp(im)
     m = XMP_DATE.search(xmp)
     if not m:
         return ""
@@ -164,7 +170,7 @@ def process(path: Path) -> dict:
         "thumb": os.path.relpath(thumb, OUT),
         "full": path.as_uri(),
         "desc": desc,
-        "date": date[:10],
+        "date": date[:19],
         "taken": date,
     }
 

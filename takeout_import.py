@@ -141,7 +141,8 @@ def exif_args(meta: dict, has_date: bool, has_gps: bool, hint_year: int | None =
     desc = full_text(meta)
     if desc:
         v = html.escape(desc, quote=False).replace("\r", "").replace("\n", "&#xa;")  # read back by -E
-        a += [f"-XMP-dc:Description={v}", f"-EXIF:ImageDescription={v}"]
+        a += [f"-XMP-dc:Description={v}", f"-EXIF:ImageDescription={v}",
+              f"-EXIF:XPComment={v}"]
     ts = (meta.get("photoTakenTime") or {}).get("timestamp")
     taken = datetime.fromtimestamp(int(ts)) if ts else None
     # A scanned old photo often has the scan/upload time as Google's "date taken":

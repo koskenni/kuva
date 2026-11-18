@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Browse a picture folder with descriptions, live — no build step.
 
-Usage:  python3 viewer.py [DIR] [--port N] [--no-browser] [--read-only]
+Usage:  python3 viewer.py [DIR] [--port N] [--no-browser] [--edit]
 
 Starts a small web server on this computer (127.0.0.1 only) and opens the
 browser. Descriptions are read from the files every time a folder is opened,
 so edits to captions show up on reload. Subfolders can be browsed too.
-Descriptions can be edited in the full-size view (needs exiftool); every
-edit is logged with the old text to ~/.local/share/kuva/muokkaukset.jsonl.
+By default the viewer is read-only. With --edit, descriptions and the time
+taken can be edited in the full-size view (needs exiftool); every edit is
+logged with the old text to ~/.local/share/kuva/muokkaukset.jsonl.
 Thumbnails are cached in ~/.cache/kuva-thumbs.
 """
 import argparse
@@ -15,6 +16,7 @@ import hashlib
 import html
 import io
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -37,7 +39,7 @@ THUMB = 480
 CACHE = Path.home() / ".cache" / "kuva-thumbs"
 EDIT_LOG = Path.home() / ".local" / "share" / "kuva" / "muokkaukset.jsonl"
 TOKEN = secrets.token_urlsafe(24)
-READ_ONLY = False
+READ_ONLY = True  # editing only with --edit
 
 ROOT: Path
 _meta_cache: dict = {}
@@ -159,20 +161,21 @@ def as_jpeg(p: Path, size: int = 3000) -> bytes:
 PLACE = "📍 "
 
 
-def save_description(p: Path, text: str) -> str:
-    """Write TEXT as the picture's description; return the description as shown.
+def save_description(p: Path, text: str) -> None:
+    """Write TEXT as the picture's description.
 
-    The text goes into XMP dc:description and EXIF ImageDescription. Older
+    The text goes into XMP dc:description, EXIF ImageDescription and EXIF
+    XPComment (shown as "Comments" in Windows file properties). Older
     copies of the description that would otherwise still be shown (EXIF
     UserComment, IPTC caption, caption/note in .comments/<file>.xml) are
     cleared; a place in the .comments file is kept. The file's modification
-    time is preserved. Every change is logged to EDIT_LOG with the old text.
+    time is preserved.
     """
     text = "\n".join(l.rstrip() for l in text.replace("\r", "").strip().split("\n"))
-    old, _ = meta(p)
     v = html.escape(text, quote=False).replace("\n", "&#xa;")  # decoded by -E
     args = ["exiftool", "-charset", "utf8", "-charset", "filename=utf8", "-E", "-P", "-m", "-q",
             "-overwrite_original", f"-XMP-dc:Description={v}", f"-EXIF:ImageDescription={v}",
+            f"-EXIF:XPComment={v}",
             "-EXIF:UserComment=", "-IPTC:Caption-Abstract=", str(p)]
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
@@ -193,14 +196,65 @@ def save_description(p: Path, text: str) -> str:
         except ET.ParseError:
             pass
 
+
+
+DATE_RE = re.compile(r"\s*(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})\.(\d{1,2})\.(\d{4}))"
+                     r"(?:\s*(?:[T ]|klo)\s*(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?\s*")
+
+
+def parse_taken(s: str) -> str:
+    """'2004-07-05 13:37[:10]', '5.7.2004 klo 13.37' or a bare date ->
+    'YYYY-MM-DD[ HH:MM:SS]'; '' clears. ValueError if not understood."""
+    if not s.strip():
+        return ""
+    m = DATE_RE.fullmatch(s)
+    if not m:
+        raise ValueError("Päiväys muodossa 2004-07-05 13:37 tai 5.7.2004 13.37")
+    g = m.groups()
+    y, mo, d = (g[0], g[1], g[2]) if g[0] else (g[5], g[4], g[3])
+    try:
+        t = datetime(int(y), int(mo), int(d), int(g[6] or 0), int(g[7] or 0), int(g[8] or 0))
+    except ValueError:
+        raise ValueError(f"Päiväystä ei ole: {s.strip()}") from None
+    return t.strftime("%Y-%m-%d %H:%M:%S") if g[6] else t.strftime("%Y-%m-%d")
+
+
+def save_taken(p: Path, value: str) -> None:
+    """Set (or with '' clear) the time the picture was taken.
+
+    A full time goes into EXIF DateTimeOriginal and the XMP date-taken
+    fields. A bare date is written to XMP only (XMP allows a date without a
+    time; EXIF does not), so no made-up time of day appears. Old sub-second
+    values are removed. The file's modification time is preserved.
+    """
+    if value and len(value) > 10:
+        exif, xmp = value.replace("-", ":"), value.replace(" ", "T")
+    else:
+        exif, xmp = "", value
+    args = ["exiftool", "-charset", "utf8", "-charset", "filename=utf8", "-P", "-m", "-q",
+            "-overwrite_original", f"-EXIF:DateTimeOriginal={exif}", "-EXIF:SubSecTimeOriginal=",
+            f"-XMP-exif:DateTimeOriginal={xmp}", f"-XMP-photoshop:DateCreated={xmp}", str(p)]
+    r = subprocess.run(args, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or "exiftool epäonnistui")
+
+
+def save_changes(p: Path, text: str | None, taken: str | None) -> tuple[str, str]:
+    """Apply a description and/or date change; log it; return (desc, taken)."""
+    old = meta(p)
+    if taken is not None:
+        save_taken(p, parse_taken(taken))
+    if text is not None:
+        save_description(p, text)
     with _lock:  # mtime is preserved, so drop cached metadata explicitly
         for k in [k for k in _meta_cache if k[0] == p]:
             del _meta_cache[k]
-    new, _ = meta(p)
+    new = meta(p)
     EDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     with open(EDIT_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps({"time": datetime.now().isoformat(timespec="seconds"), "file": str(p),
-                            "old": old, "new": new}, ensure_ascii=False) + "\n")
+                            "old": old[0], "new": new[0], "old_taken": old[1], "new_taken": new[1]},
+                           ensure_ascii=False) + "\n")
     return new
 
 
@@ -224,12 +278,20 @@ class Handler(BaseHTTPRequestHandler):
             if p is None or not p.is_file() or p.suffix.lower() not in IMG_EXT:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            desc = save_description(p, str(body["text"]))
-            self.send(json.dumps({"desc": desc}, ensure_ascii=False).encode(), "application/json")
-        except (ValueError, KeyError, TypeError):
+            text, taken = body.get("text"), body.get("taken")
+            if text is not None:
+                text = str(text)
+            if taken is not None:
+                taken = str(taken)
+                parse_taken(taken)  # validate before writing anything
+            desc, taken = save_changes(p, text, taken)
+            self.send(json.dumps({"desc": desc, "taken": taken}, ensure_ascii=False).encode(),
+                      "application/json")
+        except (KeyError, TypeError, AttributeError):
             self.send_error(HTTPStatus.BAD_REQUEST)
-        except RuntimeError as e:
-            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+        except (ValueError, RuntimeError) as e:
+            self.send_response(HTTPStatus.BAD_REQUEST if isinstance(e, ValueError)
+                               else HTTPStatus.INTERNAL_SERVER_ERROR)
             msg = json.dumps({"error": str(e)}, ensure_ascii=False).encode()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(msg)))
@@ -320,6 +382,12 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 #lb .cap .tools span{border:0;background:none;color:#f99}
 #lb textarea{width:min(760px,100%);min-height:5.5em;font:inherit;font-size:17px;line-height:1.4;padding:8px 10px;
   border-radius:6px;border:1px solid #fff6;background:#111;color:#eee;resize:vertical;display:block;margin:0 auto}
+#lb .cap button.editdt{position:static;transform:none;font:inherit;font-size:13px;color:#aaa;background:none;
+  border:1px dashed #fff4;border-radius:6px;padding:3px 8px;cursor:pointer;text-align:left}
+#lb .cap button.editdt:hover{color:#fff;border-color:#fffa;background:#ffffff14}
+#lb .tk{display:flex;flex-direction:column;gap:4px;font-size:13px;color:#aaa}
+#lb .tk input{font:inherit;font-size:15px;padding:6px 8px;border-radius:6px;border:1px solid #fff6;
+  background:#111;color:#eee;width:100%;min-width:0;box-sizing:border-box}
 #lb .placehint{color:#aaa;font-size:14px;margin-top:6px}
 </style></head><body>
 <header><div id="crumbs"></div>
@@ -361,7 +429,7 @@ function render(){
       ?`<img loading="lazy" src="/thumb?p=${enc(x.cover)}" alt="">`:'<div class="ph">📁</div>'}
       <div class="cap"><div class="d">📁 ${esc(x.name)}</div><div class="m">${dirInfo(x)}</div></div></a>`).join('')
    +shown.map((p,i)=>`<div class="card" data-i="${i}"><img loading="lazy" src="/thumb?p=${enc(p.path)}" alt="${esc(p.desc)}">
-      <div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${[p.date,p.name].filter(Boolean).map(esc).join(' · ')}</div></div></div>`).join('');
+      <div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${[when(p),p.name].filter(Boolean).map(esc).join(' · ')}</div></div></div>`).join('');
 }
 const TOKEN="__TOKEN__", PLACE="📍 ";
 const cap=lb.querySelector('.cap');
@@ -369,30 +437,44 @@ let editing=false;
 const placeLines=d=>d.split('\n').filter(l=>l.startsWith(PLACE));
 const textLines=d=>d.split('\n').filter(l=>!l.startsWith(PLACE)).join('\n');
 
-const row=(p,mid)=>`<div class="row"><span class="dt">${esc(p.date)}</span><div class="mid">${mid}</div><span class="fn">${esc(p.name)}</span></div>`;
+const when=p=>(p.taken||'').slice(0,19);  // drop fractions of a second
+const row=(p,mid,dt)=>`<div class="row"><span class="dt">${dt??esc(when(p))}</span><div class="mid">${mid}</div><span class="fn">${esc(p.name)}</span></div>`;
 function caption(){const p=shown[cur]; editing=false;
   cap.innerHTML=row(p,`<span class="d">${esc(p.desc)}</span>`
-    +(TOKEN?'<button class="edit" title="Muokkaa kuvatekstiä">✎ Muokkaa</button>':''));
-  cap.querySelector('.edit')?.addEventListener('click',edit);}
+    +(TOKEN?'<button class="edit" title="Muokkaa kuvatekstiä ja kuvausaikaa">✎ Muokkaa</button>':''),
+    TOKEN?`<button class="editdt" title="Muokkaa kuvausaikaa">${when(p)?esc(when(p))+' ✎':'+ lisää aika'}</button>`:undefined);
+  cap.querySelector('.edit')?.addEventListener('click',()=>edit());
+  cap.querySelector('.editdt')?.addEventListener('click',()=>edit(true));}
 function show(i){cur=(i+shown.length)%shown.length;
   lb.querySelector('img').src='/img?p='+enc(shown[cur].path);
   caption(); lb.classList.add('on');}
-function edit(){const p=shown[cur]; editing=true;
+function edit(focusDate){const p=shown[cur]; editing=true;
   const places=placeLines(p.desc);
   cap.innerHTML=row(p,`<div style="width:100%"><textarea aria-label="Kuvateksti">${esc(textLines(p.desc))}</textarea>`
     +(places.length?`<div class="placehint">${esc(places.join(', '))} (paikka säilyy)</div>`:'')
     +`<div class="tools"><button class="save">Tallenna</button><button class="cancel">Peru</button><span class="err"></span></div>`
-    +`<small>Ctrl+Enter tallentaa, Esc peruu</small></div>`);
-  const ta=cap.querySelector('textarea'); ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length);
+    +`<small>Ctrl+Enter tallentaa, Esc peruu</small></div>`,
+    `<label class="tk">Kuvattu<input class="taken" value="${esc(when(p))}" placeholder="vvvv-kk-pp tt:mm" spellcheck="false"
+      title="Esim. 2004-07-05 13:37, 5.7.2004 13.37 tai pelkkä päiväys. Tyhjä poistaa ajan."></label>`);
+  const ta=cap.querySelector('textarea'), ti=cap.querySelector('.taken');
+  if(focusDate){ti.focus(); ti.select();} else {ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length);}
   cap.querySelector('.save').onclick=save; cap.querySelector('.cancel').onclick=caption;}
+const byTime=(a,b)=>(!a.taken-!b.taken)||(a.taken<b.taken?-1:a.taken>b.taken?1:0)
+  ||a.name.localeCompare(b.name,'fi',{numeric:true,sensitivity:'base'});
 async function save(){const p=shown[cur], btn=cap.querySelector('.save'), err=cap.querySelector('.err');
+  const text=cap.querySelector('textarea').value, taken=cap.querySelector('.taken').value.trim();
+  const body={p:p.path};
+  if(text.trim()!==textLines(p.desc).trim()) body.text=text;
+  if(taken!==when(p)) body.taken=taken;
+  if(!('text' in body)&&!('taken' in body)){caption();return}
   btn.disabled=true; btn.textContent='Tallennetaan…'; err.textContent='';
   try{
     const r=await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json','X-Kuva-Token':TOKEN},
-      body:JSON.stringify({p:p.path,text:cap.querySelector('textarea').value})});
+      body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(j.error||('virhe '+r.status));
-    p.desc=j.desc; render();
+    p.desc=j.desc; p.taken=j.taken; p.date=j.taken.slice(0,10);
+    data.images.sort(byTime); render();
     const n=data.images.length, d=data.images.filter(x=>x.desc).length;
     $('#msg').textContent=`${n} kuvaa, ${d} kuvatekstillä`;
     const idx=shown.indexOf(p);
@@ -406,7 +488,7 @@ lb.querySelector('.next').onclick=()=>show(cur+1);
 lb.querySelector('.close').onclick=()=>lb.classList.remove('on');
 document.addEventListener('keydown',e=>{if(!lb.classList.contains('on'))return;
   if(editing){
-    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();save();}
+    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey||e.target.classList.contains('taken'))){e.preventDefault();save();}
     else if(e.key==='Escape'){e.preventDefault();caption();}
     return;}
   if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);else if(e.key==='Escape')lb.classList.remove('on');});
@@ -423,12 +505,13 @@ def main():
     ap.add_argument("dir", nargs="?", default=".", help="kuvakansio (oletus: nykyinen)")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--no-browser", action="store_true")
-    ap.add_argument("--read-only", action="store_true", help="vain katselu, ei muokkausta")
+    ap.add_argument("--edit", action="store_true",
+                    help="salli kuvatekstien ja kuvausaikojen muokkaus (oletus: vain katselu)")
     a = ap.parse_args()
     ROOT = Path(a.dir).expanduser().resolve()
     if not ROOT.is_dir():
         sys.exit(f"Ei kansio: {ROOT}")
-    READ_ONLY = a.read_only
+    READ_ONLY = not a.edit
     if not READ_ONLY and not shutil.which("exiftool"):
         print("exiftool puuttuu, joten muokkaus ei ole käytössä "
               "(sudo apt install libimage-exiftool-perl).", flush=True)
@@ -443,7 +526,8 @@ def main():
         sys.exit("Vapaata porttia ei löytynyt.")
     url = f"http://127.0.0.1:{port}/"
     print(f"Näytetään {ROOT}\nAvaa {url}  (lopeta: Ctrl+C)"
-          + ("" if READ_ONLY else f"\nMuokkaukset kirjataan: {EDIT_LOG}"), flush=True)
+          + ("\nVain katselu (muokkaus: --edit)" if READ_ONLY
+             else f"\nMuokkaus käytössä. Muokkaukset kirjataan: {EDIT_LOG}"), flush=True)
     if not a.no_browser:
         threading.Timer(0.5, webbrowser.open, [url]).start()
     try:
