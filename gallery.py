@@ -154,6 +154,57 @@ def describe(path: Path, im: Image.Image) -> tuple[str, str]:
     return "\n".join(keep), date
 
 
+# Google Photos keeps an edited copy next to the original ("IMG_1-muokattu.JPG")
+# and shows only the edited one; so do we.
+EDITED_SUFFIXES = ("-muokattu", "-edited", "-redigerad", "-bearbeitet", "-modifié", "-editado", "-modificato")
+
+
+def has_edited_copy(p: Path) -> bool:
+    return any(p.with_name(p.stem + s + p.suffix).exists() for s in EDITED_SUFFIXES)
+
+
+FOLDER_FILE = "kansio.txt"
+# kansio.txt: line 1 = the folder's name to show, further lines = description,
+# and an optional line "Kansikuva: <picture file>" choosing the cover picture.
+COVER_PREFIX = "kansikuva:"
+
+
+def folder_info(d: Path) -> tuple[str, str, str]:
+    """(display name, description, cover file name) from kansio.txt; '' for missing parts."""
+    try:
+        text = (d / FOLDER_FILE).read_text("utf-8", errors="replace").replace("\r", "")
+    except OSError:
+        return "", "", ""
+    lines, cover = [], ""
+    for l in text.rstrip().split("\n"):
+        if l.strip().lower().startswith(COVER_PREFIX):
+            cover = l.strip()[len(COVER_PREFIX):].strip()
+        else:
+            lines.append(l)
+    if not lines:
+        return "", "", cover
+    return lines[0].strip(), "\n".join(lines[1:]).strip(), cover
+
+
+def write_folder_info(d: Path, title: str, about: str, cover: str) -> None:
+    """Write kansio.txt; remove it when everything is empty."""
+    f = d / FOLDER_FILE
+    if title or about or cover:
+        f.write_text(title + "\n" + (about + "\n" if about else "")
+                     + (f"Kansikuva: {cover}\n" if cover else ""), "utf-8")
+    elif f.exists():
+        f.unlink()
+
+
+def chosen_cover(d: Path) -> Path | None:
+    """The cover picture named in d/kansio.txt, if it exists inside d."""
+    name = folder_info(d)[2]
+    if not name:
+        return None
+    p = (d / name).resolve()
+    return p if p.is_file() and d.resolve() in p.parents else None
+
+
 def process(path: Path) -> dict:
     rel = path.relative_to(SRC)
     thumb = OUT / "thumbs" / rel
@@ -198,6 +249,9 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 .card .d{font-size:15px}
 .card .m{font-size:12px;color:var(--muted);margin-top:3px}
 .card .d:empty{display:none}
+.intro{padding:16px 20px 0;max-width:900px;white-space:pre-line;color:var(--muted)}
+.intro:empty{display:none}
+header h1 small{font-weight:400;color:var(--muted);font-size:14px;margin-left:8px}
 #lb{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;z-index:10}
 #lb.on{display:flex}
 #lb img{flex:1;min-height:0;object-fit:contain;width:100%;padding:16px 60px 0}
@@ -208,7 +262,7 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 #lb .close{top:28px;right:8px;font-size:32px}
 </style></head><body>
 <header><h1>__HEADING__</h1>__CONTROLS__</header>
-<main id="grid"></main>
+<div class="intro">__INTRO__</div><main id="grid"></main>
 <div id="lb"><img alt=""><div class="cap"></div>
 <button class="prev" aria-label="Edellinen">‹</button><button class="next" aria-label="Seuraava">›</button>
 <button class="close" aria-label="Sulje">✕</button></div>
@@ -222,7 +276,7 @@ function render(){
   const only=document.getElementById('only')?.checked;
   shown=DATA.filter(p=>(!q||(p.desc+' '+p.name+' '+(p.folder||'')).toLowerCase().includes(q))&&(!only||p.desc));
   grid.innerHTML=shown.map((p,i)=>MODE==='index'
-    ? `<a class="card" href="${esc(p.href)}"><img loading="lazy" src="${esc(p.thumb)}" alt=""><div class="cap"><div class="d">${esc(p.folder)}</div><div class="m">${p.count} kuvaa · ${p.described} kuvatekstiä</div></div></a>`
+    ? `<a class="card" href="${esc(p.href)}"><img loading="lazy" src="${esc(p.thumb)}" alt=""><div class="cap"><div class="d">${esc(p.title||p.folder)}</div><div class="m">${p.title?esc(p.folder)+' · ':''}${p.count} kuvaa · ${p.described} kuvatekstiä</div></div></a>`
     : `<div class="card" data-i="${i}"><img loading="lazy" src="${esc(p.thumb)}" alt="${esc(p.desc)}"><div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${[p.date,p.name].filter(Boolean).map(esc).join(' · ')}</div></div></div>`).join('');
 }
 function show(i){cur=(i+shown.length)%shown.length;const p=shown[cur];
@@ -240,8 +294,9 @@ render();
 </script></body></html>"""
 
 
-def page(title, heading, controls, data, mode):
+def page(title, heading, controls, data, mode, intro=""):
     return (PAGE.replace("__TITLE__", html.escape(title))
+                .replace("__INTRO__", html.escape(intro))
                 .replace("__HEADING__", heading)
                 .replace("__CONTROLS__", controls)
                 .replace("__MODE__", mode)
@@ -251,7 +306,8 @@ def page(title, heading, controls, data, mode):
 def main():
     files = sorted(p for p in SRC.rglob("*")
                    if p.suffix.lower() in (".jpg", ".jpeg")
-                   and not any(part.startswith(".") for part in p.relative_to(SRC).parts))
+                   and not any(part.startswith(".") for part in p.relative_to(SRC).parts)
+                   and not has_edited_copy(p))
     print(f"{len(files)} kuvaa kansiossa {SRC}")
     OUT.mkdir(parents=True, exist_ok=True)
     with ProcessPoolExecutor() as ex:
@@ -268,10 +324,14 @@ def main():
         fname = "album-" + re.sub(r"[^\w.-]+", "_", folder) + ".html"
         controls = (search + '<label><input id="only" type="checkbox"> vain kuvatekstilliset</label>'
                     '<a href="index.html">← Kaikki albumit</a>')
-        (OUT / fname).write_text(page(folder, html.escape(folder), controls, items, "album"), "utf-8")
-        cover = next((r for r in items if r["desc"]), items[0])
-        index.append({"folder": folder, "href": fname, "thumb": cover["thumb"], "count": len(items),
-                      "described": sum(1 for r in items if r["desc"]), "desc": " ".join(r["desc"] for r in items),
+        title, about, _ = folder_info(SRC / folder)
+        chosen = chosen_cover(SRC / folder)
+        heading = (f"{html.escape(title)}<small>{html.escape(folder)}</small>" if title else html.escape(folder))
+        (OUT / fname).write_text(page(title or folder, heading, controls, items, "album", about), "utf-8")
+        cover = (next((r for r in items if chosen and r["name"] == chosen.name), None)
+                 or next((r for r in items if r["desc"]), items[0]))
+        index.append({"folder": folder, "title": title, "href": fname, "thumb": cover["thumb"], "count": len(items),
+                      "described": sum(1 for r in items if r["desc"]), "desc": " ".join([title, about] + [r["desc"] for r in items]),
                       "name": ""})
 
     (OUT / "index.html").write_text(page("Kuva-albumit", "Kuva-albumit", search + '<a href="kuvatekstit.html">Kaikki kuvatekstit →</a>', index, "index"), "utf-8")

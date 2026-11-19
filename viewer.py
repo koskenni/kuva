@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageOps
 
-from gallery import describe, natkey  # same caption lookup as the static gallery
+from gallery import chosen_cover, describe, has_edited_copy, folder_info, natkey, write_folder_info  # same caption lookup as the static gallery
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 THUMB = 480
@@ -84,13 +84,17 @@ def children(d: Path) -> tuple[list[Path], list[Path]]:
             continue
         if c.is_dir():
             subs.append(c)
-        elif c.suffix.lower() in IMG_EXT:
+        elif c.suffix.lower() in IMG_EXT and not has_edited_copy(c):
             pics.append(c)
     return subs, pics
 
 
 def cover(d: Path, depth: int = 4) -> Path | None:
-    """First picture in d, or else in its subfolders (a few levels down)."""
+    """The cover chosen in kansio.txt, else the first picture in d, else a
+    subfolder's cover (a few levels down)."""
+    c = chosen_cover(d)
+    if c:
+        return c
     subs, pics = children(d)
     if pics:
         return pics[0]
@@ -110,14 +114,17 @@ def listing(d: Path) -> dict:
         if c.is_dir():
             subs, pics = children(c)
             first = cover(c)
-            dirs.append({"name": c.name, "path": rel(c), "cover": rel(first) if first else None,
-                         "pics": len(pics), "subs": len(subs)})
-        elif c.suffix.lower() in IMG_EXT:
+            title = folder_info(c)[0]
+            dirs.append({"name": c.name, "title": title, "path": rel(c),
+                         "cover": rel(first) if first else None, "pics": len(pics), "subs": len(subs)})
+        elif c.suffix.lower() in IMG_EXT and not has_edited_copy(c):
             desc, taken = meta(c)
             imgs.append({"name": c.name, "path": rel(c), "desc": desc, "date": taken[:10], "taken": taken})
     # by time of exposure; pictures without one last, in name order
     imgs.sort(key=lambda r: (not r["taken"], r["taken"], natkey(r["name"])))
-    return {"path": rel(d), "root": ROOT.name, "dirs": dirs, "images": imgs}
+    title, about, cov = folder_info(d)
+    return {"path": rel(d), "root": ROOT.name, "title": title, "about": about, "cover": cov,
+            "dirs": dirs, "images": imgs}
 
 
 def rel(p: Path) -> str:
@@ -258,6 +265,29 @@ def save_changes(p: Path, text: str | None, taken: str | None) -> tuple[str, str
     return new
 
 
+def save_folder(d: Path, title: str | None = None, about: str | None = None,
+                cover: str | None = None) -> tuple[str, str, str]:
+    """Change the folder's name, description and/or cover in kansio.txt
+    (None = keep as is). Logged to EDIT_LOG."""
+    old = folder_info(d)
+    t, a, c = old
+    if title is not None:
+        t = " ".join(title.split())
+    if about is not None:
+        a = "\n".join(l.rstrip() for l in about.replace("\r", "").strip().split("\n")).strip()
+    if cover is not None:
+        c = cover.strip()
+        if c and not ((d / c).resolve().is_file() and d.resolve() in (d / c).resolve().parents):
+            raise ValueError(f"Kuvaa ei ole kansiossa: {c}")
+    write_folder_info(d, t, a, c)
+    new = folder_info(d)
+    EDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(EDIT_LOG, "a", encoding="utf-8") as log:
+        log.write(json.dumps({"time": datetime.now().isoformat(timespec="seconds"), "folder": str(d),
+                              "old": list(old), "new": list(new)}, ensure_ascii=False) + "\n")
+    return new
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # keep the terminal quiet
         pass
@@ -269,12 +299,23 @@ class Handler(BaseHTTPRequestHandler):
                 or self.headers.get("X-Kuva-Token") != TOKEN or READ_ONLY):
             self.send_error(HTTPStatus.FORBIDDEN)
             return
-        if urlparse(self.path).path != "/api/save":
+        route = urlparse(self.path).path
+        if route not in ("/api/save", "/api/folder"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 1 << 20)))
             p = safe(body["p"])
+            if route == "/api/folder":
+                if p is None or not p.is_dir():
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                opt = lambda k: None if body.get(k) is None else str(body[k])
+                title, about, cov = save_folder(p, opt("title"), opt("about"), opt("cover"))
+                self.send(json.dumps({"title": title, "about": about, "cover": cov},
+                                     ensure_ascii=False).encode(),
+                          "application/json")
+                return
             if p is None or not p.is_file() or p.suffix.lower() not in IMG_EXT:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -289,7 +330,7 @@ class Handler(BaseHTTPRequestHandler):
                       "application/json")
         except (KeyError, TypeError, AttributeError):
             self.send_error(HTTPStatus.BAD_REQUEST)
-        except (ValueError, RuntimeError) as e:
+        except (ValueError, RuntimeError, OSError) as e:
             self.send_response(HTTPStatus.BAD_REQUEST if isinstance(e, ValueError)
                                else HTTPStatus.INTERNAL_SERVER_ERROR)
             msg = json.dumps({"error": str(e)}, ensure_ascii=False).encode()
@@ -357,6 +398,20 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 .card .m{font-size:12px;color:var(--muted);margin-top:3px}
 .card.dir .d{font-weight:600}
 #msg{padding:20px;color:var(--muted)}
+#folder{padding:16px 20px 0;max-width:900px}
+#folder:empty{display:none}
+#folder h2{margin:0;font-size:22px}
+#folder .about{white-space:pre-line;color:var(--muted);margin-top:4px}
+#folder button{font:inherit;font-size:13px;margin-top:6px;padding:3px 10px;border-radius:6px;cursor:pointer;
+  border:1px dashed var(--line);background:none;color:var(--accent)}
+#folder input,#folder textarea{font:inherit;width:100%;padding:6px 10px;border:1px solid var(--line);
+  border-radius:6px;background:var(--card);color:var(--fg);display:block;margin-top:6px}
+#folder input{font-size:18px;font-weight:600}
+#folder textarea{min-height:4em;resize:vertical}
+#folder .tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#folder .tools .fsave{background:var(--accent);color:var(--bg);border:1px solid var(--accent)}
+#folder .err{color:#c33}
+#folder small{color:var(--muted)}
 #lb{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;z-index:10}
 #lb.on{display:flex}
 #lb img{flex:1;min-height:0;object-fit:contain;width:100%;padding:16px 60px 0}
@@ -369,11 +424,18 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 #lb .cap small{display:block;color:#aaa;font-size:13px;margin-top:6px;text-align:center}
 #lb .cap button.edit{position:static;transform:none;font-size:14px;padding:4px 10px;border-radius:6px;
   border:1px solid #fff5;background:#ffffff14;color:#ddd;white-space:nowrap}
+#lb .cap button.setcover{position:static;transform:none;font-size:14px;padding:4px 10px;border-radius:6px;
+  border:1px solid #fff3;background:none;color:#bbb;white-space:nowrap}
+#lb .cap button.setcover:hover{background:#ffffff2a;color:#fff}
+#lb .iscover{color:#d9a066;font-size:14px;white-space:nowrap}
 #lb .cap button.edit:hover{background:#ffffff2a;color:#fff}
 @media (max-width:700px){#lb .row{grid-template-columns:1fr 1fr}#lb .mid{grid-column:1/-1;order:-1}}
 #lb button{position:absolute;top:50%;transform:translateY(-50%);background:none;border:0;color:#fff;font-size:44px;cursor:pointer;padding:10px}
 #lb .prev{left:4px}#lb .next{right:4px}
 #lb .close{top:28px;right:8px;font-size:32px}
+#lb .fs{top:28px;right:56px;font-size:26px;opacity:.7}
+#lb .fs:hover{opacity:1}
+#lb:fullscreen{background:#000}
 #lb .cap .tools{margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 #lb .cap .tools button,#lb .cap .tools span{position:static;transform:none;font-size:15px;padding:6px 14px;
   border-radius:6px;border:1px solid #fff5;background:#ffffff14;color:#eee;white-space:normal}
@@ -393,9 +455,10 @@ main{padding:20px;display:grid;gap:18px;grid-template-columns:repeat(auto-fill,m
 <header><div id="crumbs"></div>
 <input id="q" type="search" placeholder="Hae kuvatekstistä…">
 <label><input id="only" type="checkbox"> vain kuvatekstilliset</label></header>
-<div id="msg"></div><main id="grid"></main>
+<div id="folder"></div><div id="msg"></div><main id="grid"></main>
 <div id="lb"><img alt=""><div class="cap"></div>
 <button class="prev" aria-label="Edellinen">‹</button><button class="next" aria-label="Seuraava">›</button>
+<button class="fs" aria-label="Koko näyttö" title="Koko näyttö (F)">⛶</button>
 <button class="close" aria-label="Sulje">✕</button></div>
 <script>
 const $=s=>document.querySelector(s), grid=$('#grid'), lb=$('#lb');
@@ -412,7 +475,8 @@ async function load(){
   const parts=data.path?data.path.split('/'):[];
   $('#crumbs').innerHTML=`<a href="#">${esc(data.root)}</a>`+parts.map((p,i)=>
     ` / <a href="#${enc(parts.slice(0,i+1).join('/'))}">${esc(p)}</a>`).join('');
-  document.title=parts.at(-1)||data.root;
+  document.title=data.title||parts.at(-1)||data.root;
+  showFolder();
   const n=data.images.length, d=data.images.filter(x=>x.desc).length;
   $('#msg').textContent=n?`${n} kuvaa, ${d} kuvatekstillä`:(data.dirs.length?'':'Ei kuvia.');
   render();
@@ -424,14 +488,37 @@ function dirInfo(x){const a=[];
 function render(){
   const q=$('#q').value.toLowerCase(), only=$('#only').checked;
   shown=data.images.filter(p=>(!q||(p.desc+' '+p.name).toLowerCase().includes(q))&&(!only||p.desc));
-  const dirs=q?data.dirs.filter(x=>x.name.toLowerCase().includes(q)):data.dirs;
+  const dirs=q?data.dirs.filter(x=>(x.name+' '+x.title).toLowerCase().includes(q)):data.dirs;
   grid.innerHTML=dirs.map(x=>`<a class="card dir" href="#${enc(x.path)}">${x.cover
       ?`<img loading="lazy" src="/thumb?p=${enc(x.cover)}" alt="">`:'<div class="ph">📁</div>'}
-      <div class="cap"><div class="d">📁 ${esc(x.name)}</div><div class="m">${dirInfo(x)}</div></div></a>`).join('')
+      <div class="cap"><div class="d">${x.title?esc(x.title):'📁 '+esc(x.name)}</div><div class="m">${x.title?'📁 '+esc(x.name)+' · ':''}${dirInfo(x)}</div></div></a>`).join('')
    +shown.map((p,i)=>`<div class="card" data-i="${i}"><img loading="lazy" src="/thumb?p=${enc(p.path)}" alt="${esc(p.desc)}">
       <div class="cap"><div class="d">${esc(p.desc)}</div><div class="m">${[when(p),p.name].filter(Boolean).map(esc).join(' · ')}</div></div></div>`).join('');
 }
 const TOKEN="__TOKEN__", PLACE="📍 ";
+const fbox=$('#folder');
+function showFolder(){
+  fbox.innerHTML=(data.title?`<h2>${esc(data.title)}</h2>`:'')+(data.about?`<div class="about">${esc(data.about)}</div>`:'')
+    +(TOKEN?`<button class="fedit">${data.title||data.about?'✎ Muokkaa kansion nimeä':'+ Anna kansiolle nimi'}</button>`:'');
+  fbox.querySelector('.fedit')?.addEventListener('click',editFolder);}
+function editFolder(){
+  fbox.innerHTML=`<input class="ftitle" placeholder="Kansion nimi (esim. Kesä 1979 Lintukodossa)" value="${esc(data.title)}">
+    <textarea class="fabout" placeholder="Kuvaus (vapaaehtoinen)">${esc(data.about)}</textarea>
+    <div class="tools"><button class="fsave">Tallenna</button><button class="fcancel">Peru</button>
+    <small>Tallentuu tiedostoon ${esc(data.path||data.root)}/kansio.txt</small><span class="err"></span></div>`;
+  const t=fbox.querySelector('.ftitle'); t.focus();
+  t.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveFolder()}else if(e.key==='Escape')showFolder()});
+  fbox.querySelector('.fabout').addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();saveFolder()}else if(e.key==='Escape')showFolder()});
+  fbox.querySelector('.fsave').onclick=saveFolder; fbox.querySelector('.fcancel').onclick=showFolder;}
+async function saveFolder(){const err=fbox.querySelector('.err');
+  try{
+    const r=await fetch('/api/folder',{method:'POST',headers:{'Content-Type':'application/json','X-Kuva-Token':TOKEN},
+      body:JSON.stringify({p:data.path,title:fbox.querySelector('.ftitle').value,about:fbox.querySelector('.fabout').value})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||('virhe '+r.status));
+    data.title=j.title; data.about=j.about; document.title=data.title||data.path.split('/').at(-1)||data.root; showFolder();
+  }catch(e){err.textContent='Tallennus epäonnistui: '+e.message}}
 const cap=lb.querySelector('.cap');
 let editing=false;
 const placeLines=d=>d.split('\n').filter(l=>l.startsWith(PLACE));
@@ -441,10 +528,21 @@ const when=p=>(p.taken||'').slice(0,19);  // drop fractions of a second
 const row=(p,mid,dt)=>`<div class="row"><span class="dt">${dt??esc(when(p))}</span><div class="mid">${mid}</div><span class="fn">${esc(p.name)}</span></div>`;
 function caption(){const p=shown[cur]; editing=false;
   cap.innerHTML=row(p,`<span class="d">${esc(p.desc)}</span>`
-    +(TOKEN?'<button class="edit" title="Muokkaa kuvatekstiä ja kuvausaikaa">✎ Muokkaa</button>':''),
+    +(TOKEN?'<button class="edit" title="Muokkaa kuvatekstiä ja kuvausaikaa">✎ Muokkaa</button>'
+      +(p.name===data.cover?'<span class="iscover">★ kansikuva</span>'
+        :'<button class="setcover" title="Näytä tämä kuva kansion kuvana kansioluettelossa">☆ Kansikuvaksi</button>'):''),
     TOKEN?`<button class="editdt" title="Muokkaa kuvausaikaa">${when(p)?esc(when(p))+' ✎':'+ lisää aika'}</button>`:undefined);
   cap.querySelector('.edit')?.addEventListener('click',()=>edit());
-  cap.querySelector('.editdt')?.addEventListener('click',()=>edit(true));}
+  cap.querySelector('.editdt')?.addEventListener('click',()=>edit(true));
+  cap.querySelector('.setcover')?.addEventListener('click',setCover);}
+async function setCover(){const p=shown[cur], b=cap.querySelector('.setcover'); b.disabled=true;
+  try{
+    const r=await fetch('/api/folder',{method:'POST',headers:{'Content-Type':'application/json','X-Kuva-Token':TOKEN},
+      body:JSON.stringify({p:data.path,cover:p.name})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||('virhe '+r.status));
+    data.cover=j.cover; caption();
+  }catch(e){b.disabled=false; b.textContent='Ei onnistunut: '+e.message}}
 function show(i){cur=(i+shown.length)%shown.length;
   lb.querySelector('img').src='/img?p='+enc(shown[cur].path);
   caption(); lb.classList.add('on');}
@@ -482,19 +580,30 @@ async function save(){const p=shown[cur], btn=cap.querySelector('.save'), err=ca
     else {editing=false; cap.innerHTML=row(p,`<span class="d">${esc(p.desc)}</span><small>Tallennettu (ei näy nykyisellä haulla).</small>`);}
   }catch(e){btn.disabled=false; btn.textContent='Tallenna'; err.textContent='Tallennus epäonnistui: '+e.message;}
 }
-grid.addEventListener('click',e=>{const c=e.target.closest('.card[data-i]');if(c)show(+c.dataset.i)});
+// Full screen: automatic when viewing only (no --edit); the ⛶ button or F toggles it.
+const AUTO_FS=!TOKEN;
+const fsOn=()=>{if(!document.fullscreenElement) lb.requestFullscreen?.().catch(()=>{});};
+const fsOff=()=>{if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});};
+const fsToggle=()=>document.fullscreenElement?fsOff():fsOn();
+function closeLb(){lb.classList.remove('on'); fsOff();}
+document.addEventListener('fullscreenchange',()=>{
+  // in viewing mode, leaving full screen (Esc) also closes the big picture
+  if(!document.fullscreenElement && AUTO_FS && lb.classList.contains('on')) lb.classList.remove('on');});
+lb.querySelector('.fs').onclick=fsToggle;
+grid.addEventListener('click',e=>{const c=e.target.closest('.card[data-i]');if(c){show(+c.dataset.i); if(AUTO_FS) fsOn();}});
 lb.querySelector('.prev').onclick=()=>show(cur-1);
 lb.querySelector('.next').onclick=()=>show(cur+1);
-lb.querySelector('.close').onclick=()=>lb.classList.remove('on');
+lb.querySelector('.close').onclick=closeLb;
 document.addEventListener('keydown',e=>{if(!lb.classList.contains('on'))return;
   if(editing){
     if(e.key==='Enter'&&(e.ctrlKey||e.metaKey||e.target.classList.contains('taken'))){e.preventDefault();save();}
     else if(e.key==='Escape'){e.preventDefault();caption();}
     return;}
-  if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);else if(e.key==='Escape')lb.classList.remove('on');});
+  if(e.key==='ArrowLeft')show(cur-1);else if(e.key==='ArrowRight')show(cur+1);else if(e.key==='Escape')closeLb();
+  else if(e.key==='f'||e.key==='F')fsToggle();});
 addEventListener('beforeunload',e=>{if(editing)e.preventDefault();});
 $('#q').addEventListener('input',render); $('#only').addEventListener('change',render);
-addEventListener('hashchange',()=>{$('#q').value='';lb.classList.remove('on');load();scrollTo(0,0)});
+addEventListener('hashchange',()=>{$('#q').value='';closeLb();load();scrollTo(0,0)});
 load();
 </script></body></html>"""
 
